@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Based on the image provided, here is the description of the right side of the header:\n\n**User Avatar Button:**\n*   **Yes**, there is a user avatar button on the far right.\n*   It consists of a **round, gold-colored circle** containing the initial **\"A\"** in white text.\n*   To the right of the circle is the name **\"Aarav\"** followed by a downward-pointing **chevron (v)** icon. The entire element appears to be enclosed in a pill-shaped container with a light border.\n\n**Toast Notification:**\n*   **No**, there is no toast notification visible anywhere in the header area or the surrounding viewport. There is no message like \"Welcome, Aarav Deshmukh!\" present.\n\n**Visual Defects:**\n*   There are no obvious visual defects, broken elements, or layout issues visible in this section. The header appears clean and properly aligned.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1791871540,
+  "id": "20261013140530c1d8b75e995043c8",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "20261013140530c1d8b75e995043c8",
+  "usage": {
+    "completion_tokens": 194,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 487,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 681
+  }
+}

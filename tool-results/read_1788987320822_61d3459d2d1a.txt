@@ -1,0 +1,676 @@
+     1→"use client";
+     2→
+     3→import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+     4→import {
+     5→  Building2, Lock, LockOpen, CheckCircle2, Timer, XCircle, Home, TrendingUp,
+     6→  Loader2, Phone, ShieldCheck, MousePointerClick,
+     7→} from "lucide-react";
+     8→import { Button } from "@/components/ui/button";
+     9→import { Badge } from "@/components/ui/badge";
+    10→import { Progress } from "@/components/ui/progress";
+    11→import { Skeleton } from "@/components/ui/skeleton";
+    12→import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+    13→import { Input } from "@/components/ui/input";
+    14→import { Label } from "@/components/ui/label";
+    15→import { useToast } from "@/hooks/use-toast";
+    16→import { SectionHeading } from "./section-heading";
+    17→import { Reveal } from "./reveal";
+    18→import { Tower3D, type FloorGroup } from "./tower-3d";
+    19→import {
+    20→  getBookingSession, formatLakhs, LOCK_TTL_MINUTES,
+    21→  type BookingUnit, type UnitsResponse,
+    22→} from "@/lib/booking-shared";
+    23→import type { SiteProject } from "@/lib/types";
+    24→import { cn } from "@/lib/utils";
+    25→
+    26→const UNIT_NOUN: Record<string, string> = {
+    27→  Plots: "plots",
+    28→  Villas: "villas",
+    29→  Apartments: "flats",
+    30→  Commercial: "units",
+    31→};
+    32→
+    33→export function BookingSection({ projects, preselectSlug }: { projects: SiteProject[]; preselectSlug?: string | null }) {
+    34→  const { toast } = useToast();
+    35→  const [session, setSession] = useState<string>("");
+    36→  const [slug, setSlug] = useState<string>(projects[0]?.slug ?? "");
+    37→  const [tower, setTower] = useState<string>("");
+    38→  const [floor, setFloor] = useState<number | null>(null);
+    39→  const [units, setUnits] = useState<BookingUnit[]>([]);
+    40→  const [stats, setStats] = useState<UnitsResponse["stats"]>({ total: 0, available: 0, locked: 0, sold: 0 });
+    41→  const [loading, setLoading] = useState(true);
+    42→  const [selectedUnit, setSelectedUnit] = useState<BookingUnit | null>(null);
+    43→  const [actionBusy, setActionBusy] = useState<string | null>(null);
+    44→  const [purchaseOpen, setPurchaseOpen] = useState(false);
+    45→  const [now, setNow] = useState(() => Date.now());
+    46→  const sessionRef = useRef("");
+    47→
+    48→  // session bootstrap (client only)
+    49→  useEffect(() => {
+    50→    const s = getBookingSession();
+    51→    sessionRef.current = s;
+    52→    setSession(s);
+    53→  }, []);
+    54→
+    55→  // preselect from project dialog CTA
+    56→  useEffect(() => {
+    57→    if (preselectSlug) {
+    58→      setSlug(preselectSlug);
+    59→      setTower("");
+    60→      setFloor(null);
+    61→      setSelectedUnit(null);
+    62→    }
+    63→  }, [preselectSlug]);
+    64→
+    65→  // ticking clock for countdowns
+    66→  useEffect(() => {
+    67→    const id = setInterval(() => setNow(Date.now()), 1000);
+    68→    return () => clearInterval(id);
+    69→  }, []);
+    70→
+    71→  const fetchUnits = useCallback(async (slugToLoad: string, opts?: { silent?: boolean }) => {
+    72→    if (!slugToLoad) return;
+    73→    // silent = background poll: keep the 3D view & grid mounted (no skeleton flash,
+    74→    // no mode/rotation reset); only the initial/project-change fetch shows loading state
+    75→    if (!opts?.silent) setLoading(true);
+    76→    try {
+    77→      const qs = sessionRef.current ? `?session=${encodeURIComponent(sessionRef.current)}` : "";
+    78→      const res = await fetch(`/api/projects/${slugToLoad}/units${qs}`, { cache: "no-store" });
+    79→      const data: UnitsResponse & { error?: string } = await res.json();
+    80→      if (!res.ok) throw new Error(data.error ?? "Failed to load availability");
+    81→      setUnits(data.units);
+    82→      setStats(data.stats);
+    83→      // pick default tower/floor
+    84→      setTower((t) => {
+    85→        const towers = [...new Set(data.units.map((u) => u.tower))];
+    86→        if (t && towers.includes(t)) return t;
+    87→        return towers[0] ?? "";
+    88→      });
+    89→      setFloor((f) => {
+    90→        const floorSet = [...new Set(data.units.map((u) => u.floor))];
+    91→        if (f !== null && floorSet.includes(f)) return f;
+    92→        return floorSet[0] ?? null;
+    93→      });
+    94→    } catch (err) {
+    95→      toast({
+    96→        title: "Could not load availability",
+    97→        description: err instanceof Error ? err.message : "Please refresh and try again.",
+    98→        variant: "destructive",
+    99→      });
+   100→    } finally {
+   101→      setLoading(false);
+   102→    }
+   103→  }, [toast]);
+   104→
+   105→  useEffect(() => {
+   106→    fetchUnits(slug);
+   107→  }, [slug, session, fetchUnits]);
+   108→
+   109→  // keep the selected unit fresh after refetches
+   110→  useEffect(() => {
+   111→    setSelectedUnit((prev) => (prev ? units.find((u) => u.id === prev.id) ?? null : null));
+   112→  }, [units]);
+   113→
+   114→  // live polling — keep availability honest for everyone (silent, no UI flash)
+   115→  useEffect(() => {
+   116→    const id = setInterval(() => {
+   117→      if (document.visibilityState === "visible") fetchUnits(slug, { silent: true });
+   118→    }, 12000);
+   119→    return () => clearInterval(id);
+   120→  }, [slug, fetchUnits]);
+   121→
+   122→  const towers = useMemo(() => [...new Set(units.map((u) => u.tower))], [units]);
+   123→  const floors = useMemo(
+   124→    () =>
+   125→      [...new Set(units.filter((u) => u.tower === tower).map((u) => u.floor))]
+   126→        .sort((a, b) => a - b),
+   127→    [units, tower]
+   128→  );
+   129→
+   130→  const floorGroups = useMemo<FloorGroup[]>(() => {
+   131→    const inTower = units.filter((u) => u.tower === tower);
+   132→    const map = new Map<number, FloorGroup>();
+   133→    for (const u of inTower) {
+   134→      if (!map.has(u.floor)) map.set(u.floor, { floor: u.floor, floorLabel: u.floorLabel, units: [] });
+   135→      map.get(u.floor)!.units.push(u);
+   136→    }
+   137→    return [...map.values()].sort((a, b) => a.floor - b.floor);
+   138→  }, [units, tower]);
+   139→
+   140→  const floorUnits = useMemo(
+   141→    () => units.filter((u) => u.tower === tower && u.floor === floor),
+   142→    [units, tower, floor]
+   143→  );
+   144→
+   145→  const soldPct = stats.total > 0 ? Math.round((stats.sold / stats.total) * 100) : 0;
+   146→  const noun = UNIT_NOUN[projects.find((p) => p.slug === slug)?.type ?? ""] ?? "units";
+   147→  const activeProject = projects.find((p) => p.slug === slug);
+   148→
+   149→  // ── actions ─────────────────────────────────────────────────────────
+   150→  async function holdUnit(unit: BookingUnit) {
+   151→    if (!session) return;
+   152→    setActionBusy(`hold-${unit.id}`);
+   153→    try {
+   154→      const res = await fetch(`/api/units/${unit.id}/lock`, {
+   155→        method: "POST",
+   156→        headers: { "Content-Type": "application/json" },
+   157→        body: JSON.stringify({ sessionId: session }),
+   158→      });
+   159→      const data = await res.json();
+   160→      if (!res.ok) throw new Error(data.error ?? "Could not hold this unit");
+   161→      toast({ title: "Unit held for you!", description: data.message });
+   162→      await fetchUnits(slug, { silent: true });
+   163→    } catch (err) {
+   164→      toast({ title: "Hold failed", description: err instanceof Error ? err.message : "Try again.", variant: "destructive" });
+   165→      await fetchUnits(slug, { silent: true });
+   166→    } finally {
+   167→      setActionBusy(null);
+   168→    }
+   169→  }
+   170→
+   171→  async function releaseUnit(unit: BookingUnit) {
+   172→    if (!session) return;
+   173→    setActionBusy(`release-${unit.id}`);
+   174→    try {
+   175→      const res = await fetch(`/api/units/${unit.id}/release`, {
+   176→        method: "POST",
+   177→        headers: { "Content-Type": "application/json" },
+   178→        body: JSON.stringify({ sessionId: session }),
+   179→      });
+   180→      const data = await res.json();
+   181→      if (!res.ok) throw new Error(data.error ?? "Could not release");
+   182→      toast({ title: "Hold released", description: data.message });
+   183→      await fetchUnits(slug, { silent: true });
+   184→    } catch (err) {
+   185→      toast({ title: "Release failed", description: err instanceof Error ? err.message : "Try again.", variant: "destructive" });
+   186→      await fetchUnits(slug, { silent: true });
+   187→    } finally {
+   188→      setActionBusy(null);
+   189→    }
+   190→  }
+   191→
+   192→  async function purchaseUnit(buyer: { name: string; phone: string; email?: string }) {
+   193→    if (!session || !selectedUnit) return;
+   194→    setActionBusy(`purchase-${selectedUnit.id}`);
+   195→    try {
+   196→      const res = await fetch(`/api/units/${selectedUnit.id}/purchase`, {
+   197→        method: "POST",
+   198→        headers: { "Content-Type": "application/json" },
+   199→        body: JSON.stringify({ sessionId: session, ...buyer }),
+   200→      });
+   201→      const data = await res.json();
+   202→      if (!res.ok) throw new Error(data.error ?? "Booking failed");
+   203→      toast({
+   204→        title: "Booking confirmed! 🎉",
+   205→        description: data.message,
+   206→      });
+   207→      setPurchaseOpen(false);
+   208→      setSelectedUnit(null);
+   209→      await fetchUnits(slug, { silent: true });
+   210→    } catch (err) {
+   211→      toast({ title: "Booking failed", description: err instanceof Error ? err.message : "Try again.", variant: "destructive" });
+   212→      await fetchUnits(slug, { silent: true });
+   213→    } finally {
+   214→      setActionBusy(null);
+   215→    }
+   216→  }
+   217→
+   218→  function msLeft(unit: BookingUnit): number {
+   219→    if (!unit.lockedUntil) return 0;
+   220→    return Math.max(0, new Date(unit.lockedUntil).getTime() - now);
+   221→  }
+   222→
+   223→  function fmtCountdown(ms: number): string {
+   224→    const s = Math.floor(ms / 1000);
+   225→    const m = Math.floor(s / 60);
+   226→    return `${m}:${String(s % 60).padStart(2, "0")}`;
+   227→  }
+   228→
+   229→  return (
+   230→    <section id="booking" className="bg-cream py-20 lg:py-28">
+   231→      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+   232→        <SectionHeading
+   233→          eyebrow="Live Availability & Booking"
+   234→          title="Pick Your Unit — Sold vs Available"
+   235→          subtitle="Explore every tower in interactive 3D & 2D layouts. Hold a unit for 10 minutes, book it online, and never worry about double-booking — availability updates in real time."
+   236→        />
+   237→
+   238→        {/* Project selector */}
+   239→        <Reveal delay={0.1} className="mt-10">
+   240→          <div className="flex flex-wrap justify-center gap-2.5">
+   241→            {projects.map((p) => (
+   242→              <button
+   243→                key={p.slug}
+   244→                onClick={() => {
+   245→                  setSlug(p.slug);
+   246→                  setTower("");
+   247→                  setFloor(null);
+   248→                  setSelectedUnit(null);
+   249→                }}
+   250→                className={cn(
+   251→                  "rounded-full px-4 sm:px-5 py-2.5 text-sm font-semibold border-2 transition-all",
+   252→                  slug === p.slug
+   253→                    ? "bg-pine text-white border-pine shadow-[0_10px_24px_-12px_rgba(28,91,63,0.7)]"
+   254→                    : "bg-white text-forest border-border hover:border-pine/50"
+   255→                )}
+   256→                aria-pressed={slug === p.slug}
+   257→              >
+   258→                {p.name}
+   259→              </button>
+   260→            ))}
+   261→          </div>
+   262→        </Reveal>
+   263→
+   264→        {/* Stats bar */}
+   265→        <Reveal delay={0.15} className="mt-8">
+   266→          <div className="rounded-3xl bg-forest relative overflow-hidden pattern-dots">
+   267→            <div className="absolute inset-0 bg-gradient-to-r from-forest via-forest/95 to-pine/90" aria-hidden="true" />
+   268→            {loading ? (
+   269→              <div className="relative grid grid-cols-2 sm:grid-cols-4 gap-4 p-5">
+   270→                {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-16 bg-white/10 rounded-xl" />)}
+   271→              </div>
+   272→            ) : (
+   273→              <div className="relative p-5 sm:p-6">
+   274→                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+   275→                  {[
+   276→                    { label: `Total ${noun}`, value: stats.total, icon: Building2, color: "text-sage" },
+   277→                    { label: "Available", value: stats.available, icon: Home, color: "text-gold" },
+   278→                    { label: "Held by Buyers", value: stats.locked, icon: Lock, color: "text-gold" },
+   279→                    { label: "Sold Out", value: stats.sold, icon: TrendingUp, color: "text-sage" },
+   280→                  ].map((s) => (
+   281→                    <div key={s.label} className="rounded-xl bg-white/8 border border-white/12 px-4 py-3.5 text-center">
+   282→                      <s.icon className={cn("h-5 w-5 mx-auto mb-1", s.color)} aria-hidden="true" />
+   283→                      <div className="font-display text-2xl sm:text-3xl font-bold text-white tabular-nums">{s.value}</div>
+   284→                      <div className="text-[10px] sm:text-[11px] uppercase tracking-widest text-sage/70 mt-1">{s.label}</div>
+   285→                    </div>
+   286→                  ))}
+   287→                </div>
+   288→                <div className="mt-4 flex items-center gap-3">
+   289→                  <span className="text-xs font-bold text-gold whitespace-nowrap">{soldPct}% SOLD</span>
+   290→                  <Progress value={soldPct} className="h-2.5 bg-white/12 [&>div]:bg-gradient-to-r [&>div]:from-gold [&>div]:to-gold-light rounded-full" />
+   291→                  <span className="text-[11px] text-sage/70 whitespace-nowrap hidden sm:block">
+   292→                    {stats.available} of {stats.total} {noun} still open
+   293→                  </span>
+   294→                </div>
+   295→              </div>
+   296→            )}
+   297→          </div>
+   298→        </Reveal>
+   299→
+   300→        {/* Tower selector */}
+   301→        {!loading && towers.length > 1 && (
+   302→          <Reveal delay={0.05} className="mt-6 flex flex-wrap items-center gap-2">
+   303→            <span className="text-xs font-bold uppercase tracking-widest text-moss">Layout:</span>
+   304→            {towers.map((t) => (
+   305→              <button
+   306→                key={t}
+   307→                onClick={() => {
+   308→                  setTower(t);
+   309→                  const f = [...new Set(units.filter((u) => u.tower === t).map((u) => u.floor))].sort((a, b) => a - b);
+   310→                  setFloor(f[0] ?? null);
+   311→                  setSelectedUnit(null);
+   312→                }}
+   313→                className={cn(
+   314→                  "rounded-full px-4 py-2 text-sm font-semibold border transition-all",
+   315→                  tower === t ? "bg-gold text-forest border-gold-deep" : "bg-white text-forest border-border hover:border-gold/60"
+   316→                )}
+   317→                aria-pressed={tower === t}
+   318→              >
+   319→                {t}
+   320→              </button>
+   321→            ))}
+   322→          </Reveal>
+   323→        )}
+   324→
+   325→        {/* Main interactive area */}
+   326→        <div className="mt-6 grid lg:grid-cols-[0.95fr_1.05fr] gap-6 items-start">
+   327→          {/* 3D / 2D tower */}
+   328→          <Reveal className="min-w-0">
+   329→            {loading ? (
+   330→              <Skeleton className="h-[500px] rounded-3xl" />
+   331→            ) : floorGroups.length > 0 ? (
+   332→              <Tower3D
+   333→                floors={floorGroups}
+   334→                towerName={`${tower} — ${activeProject?.name ?? ""}`}
+   335→                selectedUnitId={selectedUnit?.id ?? null}
+   336→                selectedFloor={floor}
+   337→                onSelectUnit={(u) => {
+   338→                  setSelectedUnit(u);
+   339→                  setFloor(u.floor);
+   340→                }}
+   341→                onSelectFloor={(f) => setFloor(f)}
+   342→              />
+   343→            ) : (
+   344→              <div className="rounded-3xl border border-dashed border-border p-10 text-center text-moss bg-white">
+   345→                No units listed for this project yet.
+   346→              </div>
+   347→            )}
+   348→          </Reveal>
+   349→
+   350→          {/* Floor plan grid + selected unit panel */}
+   351→          <Reveal delay={0.1} className="min-w-0">
+   352→            <div className="space-y-5">
+   353→              {/* Floor chips */}
+   354→              {!loading && floors.length > 1 && (
+   355→                <div className="flex flex-wrap gap-2">
+   356→                  {floors.map((f) => {
+   357→                    const label = floorGroups.find((g) => g.floor === f)?.floorLabel ?? String(f);
+   358→                    const fUnits = units.filter((u) => u.tower === tower && u.floor === f);
+   359→                    const avail = fUnits.filter((u) => u.status === "AVAILABLE").length;
+   360→                    return (
+   361→                      <button
+   362→                        key={f}
+   363→                        onClick={() => {
+   364→                          setFloor(f);
+   365→                          setSelectedUnit(null);
+   366→                        }}
+   367→                        className={cn(
+   368→                          "rounded-xl px-4 py-2 text-sm font-bold border-2 transition-all",
+   369→                          floor === f ? "bg-forest text-gold border-forest" : "bg-white text-forest border-border hover:border-pine/50"
+   370→                        )}
+   371→                        aria-pressed={floor === f}
+   372→                      >
+   373→                        {label === "0" ? "G" : label}
+   374→                        <span className="ml-1.5 text-[10px] font-semibold opacity-70">({avail})</span>
+   375→                      </button>
+   376→                    );
+   377→                  })}
+   378→                </div>
+   379→              )}
+   380→
+   381→              {/* Unit grid (2D floor plan) */}
+   382→              <div className="rounded-3xl bg-white border border-border shadow-[0_18px_44px_-26px_rgba(15,61,42,0.4)] overflow-hidden">
+   383→                <div className="px-5 py-3.5 border-b border-border bg-sage/60 flex items-center justify-between">
+   384→                  <span className="font-semibold text-forest text-sm">
+   385→                    {tower}
+   386→                    {floor !== null && (
+   387→                      <>
+   388→                        {" · "}
+   389→                        {floorGroups.find((g) => g.floor === floor)?.floorLabel === "0"
+   390→                          ? "Ground Floor"
+   391→                          : `Floor ${floorGroups.find((g) => g.floor === floor)?.floorLabel ?? floor}`}
+   392→                      </>
+   393→                    )}
+   394→                  </span>
+   395→                  <span className="flex items-center gap-1.5 text-[11px] font-semibold text-moss">
+   396→                    <MousePointerClick className="h-3.5 w-3.5" aria-hidden="true" />
+   397→                    Click a unit to book
+   398→                  </span>
+   399→                </div>
+   400→                {loading ? (
+   401→                  <div className="p-5 grid grid-cols-2 sm:grid-cols-3 gap-3">
+   402→                    {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
+   403→                  </div>
+   404→                ) : (
+   405→                  <div className="p-4 sm:p-5 grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3 max-h-[380px] overflow-y-auto scroll-area-thin">
+   406→                    {floorUnits.map((u) => (
+   407→                      <UnitCard
+   408→                        key={u.id}
+   409→                        unit={u}
+   410→                        selected={selectedUnit?.id === u.id}
+   411→                        onClick={() => setSelectedUnit(u)}
+   412→                      />
+   413→                    ))}
+   414→                    {floorUnits.length === 0 && (
+   415→                      <p className="col-span-full text-center text-moss py-6 text-sm">No units on this level.</p>
+   416→                    )}
+   417→                  </div>
+   418→                )}
+   419→              </div>
+   420→
+   421→              {/* Selected unit panel */}
+   422→              {selectedUnit && (
+   423→                <SelectedUnitPanel
+   424→                  unit={selectedUnit}
+   425→                  now={now}
+   426→                  busy={actionBusy}
+   427→                  onHold={() => holdUnit(selectedUnit)}
+   428→                  onRelease={() => releaseUnit(selectedUnit)}
+   429→                  onPurchase={() => setPurchaseOpen(true)}
+   430→                />
+   431→              )}
+   432→            </div>
+   433→          </Reveal>
+   434→        </div>
+   435→      </div>
+   436→
+   437→      {/* Purchase dialog */}
+   438→      <PurchaseDialog
+   439→        open={purchaseOpen}
+   440→        unit={selectedUnit}
+   441→        onClose={() => setPurchaseOpen(false)}
+   442→        onSubmit={purchaseUnit}
+   443→        busy={selectedUnit ? actionBusy === `purchase-${selectedUnit.id}` : false}
+   444→      />
+   445→    </section>
+   446→  );
+   447→}
+   448→
+   449→/* ── Unit card (2D grid) ─────────────────────────────────────────── */
+   450→function UnitCard({ unit, selected, onClick }: { unit: BookingUnit; selected: boolean; onClick: () => void }) {
+   451→  return (
+   452→    <button
+   453→      onClick={onClick}
+   454→      disabled={unit.status === "SOLD"}
+   455→      className={cn(
+   456→        "relative rounded-xl border-2 p-3 text-left transition-all",
+   457→        unit.status === "AVAILABLE" && "bg-sage/50 border-pine/30 hover:border-pine hover:-translate-y-0.5 cursor-pointer",
+   458→        unit.status === "LOCKED" && unit.isMine && "bg-gold/25 border-gold-deep/60 hover:border-gold-deep cursor-pointer",
+   459→        unit.status === "LOCKED" && !unit.isMine && "bg-gold/15 border-gold-deep/40 opacity-80 cursor-not-allowed",
+   460→        unit.status === "SOLD" && "bg-stone-100 border-stone-300 cursor-not-allowed opacity-75",
+   461→        selected && "ring-2 ring-brick ring-offset-2 ring-offset-white"
+   462→      )}
+   463→      aria-pressed={selected}
+   464→      aria-label={`Unit ${unit.unitNumber}, ${unit.unitType}, ${unit.areaSqft} sq ft, ${unit.status}`}
+   465→    >
+   466→      <div className="flex items-start justify-between gap-2">
+   467→        <span className={cn("font-display font-bold text-base", unit.status === "SOLD" ? "text-stone-400 line-through" : "text-forest")}>
+   468→          {unit.unitNumber}
+   469→        </span>
+   470→        <StatusDot status={unit.status} isMine={unit.isMine} />
+   471→      </div>
+   472→      <div className={cn("text-[11px] font-medium mt-0.5", unit.status === "SOLD" ? "text-stone-400" : "text-moss")}>
+   473→        {unit.unitType} · {unit.areaSqft} sq.ft
+   474→      </div>
+   475→      <div className={cn("text-[13px] font-bold mt-1.5", unit.status === "SOLD" ? "text-stone-400" : "text-pine")}>
+   476→        {formatLakhs(unit.priceLakhs)}
+   477→      </div>
+   478→      {unit.status === "LOCKED" && (
+   479→        <div className={cn("text-[10px] font-bold mt-1 uppercase tracking-wide", unit.isMine ? "text-gold-deep" : "text-gold-deep/70")}>
+   480→          {unit.isMine ? "★ Your hold" : "Held by buyer"}
+   481→        </div>
+   482→      )}
+   483→    </button>
+   484→  );
+   485→}
+   486→
+   487→function StatusDot({ status, isMine }: { status: BookingUnit["status"]; isMine: boolean }) {
+   488→  if (status === "SOLD") return <span className="h-2.5 w-2.5 rounded-full bg-stone-400 shrink-0" aria-label="Sold" />;
+   489→  if (status === "LOCKED") return <span className={cn("h-2.5 w-2.5 rounded-full shrink-0", isMine ? "bg-gold" : "bg-gold/50")} aria-label="Held" />;
+   490→  return <span className="h-2.5 w-2.5 rounded-full bg-leaf shrink-0" aria-label="Available" />;
+   491→}
+   492→
+   493→/* ── Selected unit action panel ──────────────────────────────────── */
+   494→function SelectedUnitPanel({
+   495→  unit, now, busy, onHold, onRelease, onPurchase,
+   496→}: {
+   497→  unit: BookingUnit;
+   498→  now: number;
+   499→  busy: string | null;
+   500→  onHold: () => void;
+   501→  onRelease: () => void;
+   502→  onPurchase: () => void;
+   503→}) {
+   504→  const left = unit.lockedUntil ? Math.max(0, new Date(unit.lockedUntil).getTime() - now) : 0;
+   505→  const m = Math.floor(left / 60000);
+   506→  const s = Math.floor((left % 60000) / 1000);
+   507→
+   508→  return (
+   509→    <div className={cn(
+   510→      "rounded-3xl border-2 p-5 sm:p-6 shadow-[0_18px_44px_-26px_rgba(15,61,42,0.4)]",
+   511→      unit.status === "SOLD" && "bg-stone-100 border-stone-300",
+   512→      unit.status === "LOCKED" && "bg-gold-light/50 border-gold-deep/50",
+   513→      unit.status === "AVAILABLE" && "bg-white border-pine/40"
+   514→    )}>
+   515→      <div className="flex flex-wrap items-start justify-between gap-4">
+   516→        <div>
+   517→          <div className="flex items-center gap-2.5">
+   518→            <span className="font-display text-2xl font-bold text-forest">{unit.unitNumber}</span>
+   519→            <Badge className={cn(
+   520→              "rounded-full font-bold",
+   521→              unit.status === "AVAILABLE" && "bg-leaf text-white",
+   522→              unit.status === "LOCKED" && (unit.isMine ? "bg-gold text-forest" : "bg-gold/60 text-forest/70"),
+   523→              unit.status === "SOLD" && "bg-stone-400 text-white"
+   524→            )}>
+   525→              {unit.status === "AVAILABLE" ? "Available" : unit.status === "SOLD" ? "Sold Out" : unit.isMine ? "Your Hold" : "Held by Buyer"}
+   526→            </Badge>
+   527→          </div>
+   528→          <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+   529→            <span className="text-moss">Type</span><span className="font-semibold text-forest">{unit.unitType}</span>
+   530→            <span className="text-moss">Area</span><span className="font-semibold text-forest">{unit.areaSqft.toLocaleString("en-IN")} sq.ft</span>
+   531→            <span className="text-moss">Price</span><span className="font-semibold text-pine">{formatLakhs(unit.priceLakhs)}</span>
+   532→            <span className="text-moss">Facing</span><span className="font-semibold text-forest">{unit.facing ?? "—"}</span>
+   533→          </div>
+   534→        </div>
+   535→
+   536→        {/* Countdown */}
+   537→        {unit.status === "LOCKED" && unit.isMine && (
+   538→          <div className="text-center rounded-2xl bg-forest text-cream px-5 py-3">
+   539→            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-gold font-bold">
+   540→              <Timer className="h-3.5 w-3.5" aria-hidden="true" />
+   541→              Hold expires in
+   542→            </div>
+   543→            <div className="font-display text-3xl font-bold text-gold tabular-nums mt-0.5">
+   544→              {m}:{String(s).padStart(2, "0")}
+   545→            </div>
+   546→          </div>
+   547→        )}
+   548→      </div>
+   549→
+   550→      {/* Actions */}
+   551→      <div className="mt-5 flex flex-wrap gap-2.5">
+   552→        {unit.status === "AVAILABLE" && (
+   553→          <>
+   554→            <Button
+   555→              onClick={onHold}
+   556→              disabled={busy === `hold-${unit.id}`}
+   557→              className="bg-gold hover:bg-gold-deep text-forest font-bold rounded-xl h-11 px-6"
+   558→            >
+   559→              {busy === `hold-${unit.id}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
+   560→              Hold for {LOCK_TTL_MINUTES} min
+   561→            </Button>
+   562→            <Button
+   563→              onClick={onPurchase}
+   564→              className="bg-pine hover:bg-leaf text-white font-bold rounded-xl h-11 px-6"
+   565→            >
+   566→              <CheckCircle2 className="h-4 w-4" />
+   567→              Book Now
+   568→            </Button>
+   569→          </>
+   570→        )}
+   571→
+   572→        {unit.status === "LOCKED" && unit.isMine && (
+   573→          <>
+   574→            <Button
+   575→              onClick={onPurchase}
+   576→              disabled={left <= 0}
+   577→              className="bg-pine hover:bg-leaf text-white font-bold rounded-xl h-11 px-6"
+   578→            >
+   579→              <CheckCircle2 className="h-4 w-4" />
+   580→              Book Now — Secure This Unit
+   581→            </Button>
+   582→            <Button
+   583→              onClick={onRelease}
+   584→              variant="outline"
+   585→              disabled={busy === `release-${unit.id}`}
+   586→              className="border-brick/40 text-brick hover:bg-brick/10 font-semibold rounded-xl h-11 px-5"
+   587→            >
+   588→              {busy === `release-${unit.id}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <LockOpen className="h-4 w-4" />}
+   589→              Release Hold
+   590→            </Button>
+   591→          </>
+   592→        )}
+   593→
+   594→        {unit.status === "LOCKED" && !unit.isMine && (
+   595→          <div className="flex items-center gap-2 text-sm font-semibold text-gold-deep bg-gold/15 rounded-xl px-4 py-3">
+   596→            <Timer className="h-4 w-4 shrink-0" aria-hidden="true" />
+   597→            Another buyer is holding this unit. If their timer expires, it will open up automatically.
+   598→          </div>
+   599→        )}
+   600→
+   601→        {unit.status === "SOLD" && (
+   602→          <div className="flex items-center gap-2 text-sm font-semibold text-stone-500">
+   603→            <XCircle className="h-4 w-4" aria-hidden="true" />
+   604→            This unit is sold out. Explore other units above.
+   605→          </div>
+   606→        )}
+   607→      </div>
+   608→
+   609→      <div className="mt-4 flex items-center gap-2 text-[11px] text-moss">
+   610→        <ShieldCheck className="h-3.5 w-3.5 text-leaf shrink-0" aria-hidden="true" />
+   611→        Server-verified availability — double-booking is impossible. Locks auto-release after {LOCK_TTL_MINUTES} minutes.
+   612→      </div>
+   613→    </div>
+   614→  );
+   615→}
+   616→
+   617→/* ── Purchase dialog ─────────────────────────────────────────────── */
+   618→function PurchaseDialog({
+   619→  open, unit, onClose, onSubmit, busy,
+   620→}: {
+   621→  open: boolean;
+   622→  unit: BookingUnit | null;
+   623→  onClose: () => void;
+   624→  onSubmit: (buyer: { name: string; phone: string; email?: string }) => void;
+   625→  busy: boolean;
+   626→}) {
+   627→  const [name, setName] = useState("");
+   628→  const [phone, setPhone] = useState("");
+   629→  const [email, setEmail] = useState("");
+   630→
+   631→  return (
+   632→    <Dialog open={open && !!unit} onOpenChange={(o) => !o && onClose()}>
+   633→      <DialogContent className="max-w-md w-[92vw] bg-cream rounded-3xl border-gold/30 p-0 overflow-hidden">
+   634→        <div className="bg-forest px-6 py-5">
+   635→          <DialogTitle className="font-display text-xl font-bold text-white flex items-center gap-2">
+   636→            <CheckCircle2 className="h-5 w-5 text-gold" aria-hidden="true" />
+   637→            Confirm Your Booking
+   638→          </DialogTitle>
+   639→          <DialogDescription className="text-sage/75 text-sm mt-1">
+   640→            {unit ? `Unit ${unit.unitNumber} · ${unit.unitType} · ${formatLakhs(unit.priceLakhs)}` : ""}
+   641→          </DialogDescription>
+   642→        </div>
+   643→        <form
+   644→          className="p-6 space-y-4"
+   645→          onSubmit={(e) => {
+   646→            e.preventDefault();
+   647→            if (!name.trim() || phone.trim().length < 10) return;
+   648→            onSubmit({ name: name.trim(), phone: phone.trim(), email: email.trim() || undefined });
+   649→          }}
+   650→        >
+   651→          <div className="space-y-1.5">
+   652→            <Label htmlFor="book-name" className="text-forest text-sm font-medium">Full Name <span className="text-brick">*</span></Label>
+   653→            <Input id="book-name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="Your name as per ID" className="h-11 rounded-xl focus-visible:ring-gold" />
+   654→          </div>
+   655→          <div className="space-y-1.5">
+   656→            <Label htmlFor="book-phone" className="text-forest text-sm font-medium">Phone Number <span className="text-brick">*</span></Label>
+   657→            <Input id="book-phone" type="tel" inputMode="numeric" value={phone} required onChange={(e) => setPhone(e.target.value.replace(/[^0-9+ ]/g, ""))} placeholder="98XXX XXXXX" className="h-11 rounded-xl focus-visible:ring-gold" />
+   658→          </div>
+   659→          <div className="space-y-1.5">
+   660→            <Label htmlFor="book-email" className="text-forest text-sm font-medium">Email (optional)</Label>
+   661→            <Input id="book-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" className="h-11 rounded-xl focus-visible:ring-gold" />
+   662→          </div>
+   663→          <div className="rounded-xl bg-sage/70 border border-pine/20 px-4 py-3 text-xs text-forest leading-relaxed flex gap-2">
+   664→            <Phone className="h-4 w-4 text-pine shrink-0 mt-0.5" aria-hidden="true" />
+   665→            Our team will call you to complete documentation &amp; payment. Booking is confirmed instantly — the unit is removed from availability right away.
+   666→          </div>
+   667→          <Button type="submit" disabled={busy} className="w-full h-12 bg-pine hover:bg-leaf text-white font-bold rounded-xl">
+   668→            {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
+   669→            Confirm Booking
+   670→          </Button>
+   671→        </form>
+   672→      </DialogContent>
+   673→    </Dialog>
+   674→  );
+   675→}
+   676→

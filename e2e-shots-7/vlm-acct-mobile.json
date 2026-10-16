@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "1. **Vertical Stacking:** Yes, the profile banner, 3 stat tiles, and the three sections (Bookings, Reviews, Albums) stack vertically in a single column without horizontal overflow.\n2. **CTA Visibility:** All CTA buttons (Enquire Now, Browse & Book a Home, Write a Review, Share Your Transformation) are fully visible and fit within the screen width.\n3. **Visual Defects:** No visual defects are observed; the layout is clean and responsive for the mobile view.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1791872140,
+  "id": "20261013141536024ba7b5d92045ad",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "20261013141536024ba7b5d92045ad",
+  "usage": {
+    "completion_tokens": 106,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 1721,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 1827
+  }
+}

@@ -1,0 +1,764 @@
+     1→import { RoundedBox } from "@react-three/drei";
+     2→import { useFrame } from "@react-three/fiber";
+     3→import { useMemo } from "react";
+     4→import type { RefObject } from "react";
+     5→import * as THREE from "three";
+     6→
+     7→/* ------------------------------------------------------------------ */
+     8→/* Palette helpers                                                     */
+     9→/* ------------------------------------------------------------------ */
+    10→
+    11→const IVORY_WALL = "#F5F0E4";
+    12→const ROOF_IVORY = "#F1EADA";
+    13→const GOLD = "#C6A55C";
+    14→const WALNUT = "#6B4226";
+    15→const EMERALD_DEEP = "#175641";
+    16→
+    17→/* ------------------------------------------------------------------ */
+    18→/* Shell: roof, fascia, floor slab, solid west/east walls              */
+    19→/* ------------------------------------------------------------------ */
+    20→
+    21→function Shell() {
+    22→  const parts = useMemo(() => {
+    23→    const geos = {
+    24→      roof: new THREE.BoxGeometry(15, 0.4, 29.2),
+    25→      fascia: new THREE.BoxGeometry(15.1, 0.12, 29.3),
+    26→      floor: new THREE.BoxGeometry(14.6, 0.25, 28.6),
+    27→      wall: new THREE.BoxGeometry(0.3, 3.6, 28.4),
+    28→      skirt: new THREE.BoxGeometry(0.02, 0.09, 28.4),
+    29→    };
+    30→    const mats = {
+    31→      roof: new THREE.MeshStandardMaterial({ color: ROOF_IVORY, roughness: 0.9 }),
+    32→      floor: new THREE.MeshStandardMaterial({ color: "#E8DFC8", roughness: 0.75 }),
+    33→      wall: new THREE.MeshStandardMaterial({ color: IVORY_WALL, roughness: 0.92 }),
+    34→      gold: new THREE.MeshStandardMaterial({
+    35→        color: GOLD,
+    36→        metalness: 0.65,
+    37→        roughness: 0.28,
+    38→        emissive: "#6E5424",
+    39→        emissiveIntensity: 0.3,
+    40→      }),
+    41→    };
+    42→    return { geos, mats };
+    43→  }, []);
+    44→
+    45→  return (
+    46→    <group>
+    47→      <mesh
+    48→        geometry={parts.geos.roof}
+    49→        material={parts.mats.roof}
+    50→        position={[0, 3.4, -4]}
+    51→        castShadow
+    52→      />
+    53→      <mesh
+    54→        geometry={parts.geos.fascia}
+    55→        material={parts.mats.gold}
+    56→        position={[0, 3.4, -4]}
+    57→      />
+    58→      <mesh
+    59→        geometry={parts.geos.floor}
+    60→        material={parts.mats.floor}
+    61→        position={[0, 0.125, -4]}
+    62→        receiveShadow
+    63→      />
+    64→      {/* Solid west + east walls. */}
+    65→      {[-7, 7].map((x) => (
+    66→        <mesh
+    67→          key={`w-${x}`}
+    68→          geometry={parts.geos.wall}
+    69→          material={parts.mats.wall}
+    70→          position={[x, 1.8, -4]}
+    71→        />
+    72→      ))}
+    73→      {/* Gold skirting along the interior faces of the solid walls. */}
+    74→      {[-6.86, 6.86].map((x) => (
+    75→        <mesh
+    76→          key={`sk-${x}`}
+    77→          geometry={parts.geos.skirt}
+    78→          material={parts.mats.gold}
+    79→          position={[x, 0.31, -4]}
+    80→        />
+    81→      ))}
+    82→    </group>
+    83→  );
+    84→}
+    85→
+    86→/* ------------------------------------------------------------------ */
+    87→/* South glass facade (dissolves as the camera crosses the threshold)  */
+    88→/* ------------------------------------------------------------------ */
+    89→
+    90→const MULLION_XS = [-7, -5, -3, -1, 1, 3, 5, 7];
+    91→
+    92→/**
+    93→ * Module-level material for the south facade glass. It is faded out
+    94→ * (opacity -> 0, then hidden) as the camera crosses the threshold between
+    95→ * scroll progress 0.46 and 0.54, so the fly-through passes "through" the wall.
+    96→ */
+    97→const FACADE_GLASS_MAT = new THREE.MeshStandardMaterial({
+    98→  color: "#A8D8C6",
+    99→  transparent: true,
+   100→  opacity: 0.32,
+   101→  roughness: 0.1,
+   102→  metalness: 0.15,
+   103→  depthWrite: false,
+   104→  side: THREE.DoubleSide,
+   105→});
+   106→
+   107→function SouthFacade({ progressRef }: { progressRef: RefObject<number> }) {
+   108→  const parts = useMemo(() => {
+   109→    const gold = new THREE.MeshStandardMaterial({
+   110→      color: GOLD,
+   111→      metalness: 0.7,
+   112→      roughness: 0.25,
+   113→      emissive: "#6E5424",
+   114→      emissiveIntensity: 0.3,
+   115→    });
+   116→    const geos = {
+   117→      mullionV: new THREE.BoxGeometry(0.09, 3.0, 0.09),
+   118→      mullionH: new THREE.BoxGeometry(14.15, 0.07, 0.07),
+   119→      post: new THREE.BoxGeometry(0.1, 3.02, 0.16),
+   120→      header: new THREE.BoxGeometry(1.76, 0.14, 0.18),
+   121→      handle: new THREE.CylinderGeometry(0.024, 0.024, 1.25, 10),
+   122→      canopy: new THREE.BoxGeometry(2.4, 0.07, 0.55),
+   123→    };
+   124→    return { gold, geos };
+   125→  }, []);
+   126→
+   127→  useFrame(() => {
+   128→    const p = progressRef.current;
+   129→    const fade = THREE.MathUtils.clamp((p - 0.46) / 0.08, 0, 1);
+   130→    FACADE_GLASS_MAT.opacity = 0.32 * (1 - fade);
+   131→    FACADE_GLASS_MAT.visible = fade < 0.999;
+   132→  });
+   133→
+   134→  return (
+   135→    <group>
+   136→      <mesh material={FACADE_GLASS_MAT} position={[0, 1.85, 10]}>
+   137→        <planeGeometry args={[14, 3.2]} />
+   138→      </mesh>
+   139→      {/* Vertical mullions every 2 m (center bay left open for the door). */}
+   140→      {MULLION_XS.map((x) => (
+   141→        <mesh
+   142→          key={`mv-${x}`}
+   143→          geometry={parts.geos.mullionV}
+   144→          material={parts.gold}
+   145→          position={[x, 1.75, 10.03]}
+   146→        />
+   147→      ))}
+   148→      <mesh
+   149→        geometry={parts.geos.mullionH}
+   150→        material={parts.gold}
+   151→        position={[0, 1.1, 10.03]}
+   152→      />
+   153→      <mesh
+   154→        geometry={parts.geos.mullionH}
+   155→        material={parts.gold}
+   156→        position={[0, 2.6, 10.03]}
+   157→      />
+   158→      {/* Center entrance door frame + handle + small gold canopy. */}
+   159→      {[-0.8, 0.8].map((x) => (
+   160→        <mesh
+   161→          key={`dp-${x}`}
+   162→          geometry={parts.geos.post}
+   163→          material={parts.gold}
+   164→          position={[x, 1.76, 10.06]}
+   165→        />
+   166→      ))}
+   167→      <mesh
+   168→        geometry={parts.geos.header}
+   169→        material={parts.gold}
+   170→        position={[0, 3.18, 10.06]}
+   171→      />
+   172→      <mesh
+   173→        geometry={parts.geos.handle}
+   174→        material={parts.gold}
+   175→        position={[0.62, 1.5, 10.12]}
+   176→      />
+   177→      <mesh
+   178→        geometry={parts.geos.canopy}
+   179→        material={parts.gold}
+   180→        position={[0, 3.14, 10.28]}
+   181→      />
+   182→    </group>
+   183→  );
+   184→}
+   185→
+   186→/* ------------------------------------------------------------------ */
+   187→/* North sun-room window + emissive morning-sun backdrop               */
+   188→/* ------------------------------------------------------------------ */
+   189→
+   190→function NorthWindow() {
+   191→  const parts = useMemo(() => {
+   192→    const glassMat = new THREE.MeshStandardMaterial({
+   193→      color: "#A8D8C6",
+   194→      transparent: true,
+   195→      opacity: 0.3,
+   196→      roughness: 0.1,
+   197→      metalness: 0.15,
+   198→      depthWrite: false,
+   199→      side: THREE.DoubleSide,
+   200→    });
+   201→    const gold = new THREE.MeshStandardMaterial({
+   202→      color: GOLD,
+   203→      metalness: 0.7,
+   204→      roughness: 0.25,
+   205→      emissive: "#6E5424",
+   206→      emissiveIntensity: 0.3,
+   207→    });
+   208→    const sun = new THREE.MeshStandardMaterial({
+   209→      color: "#FFF3D6",
+   210→      emissive: "#FFE9C0",
+   211→      emissiveIntensity: 1.4,
+   212→    });
+   213→    const geos = {
+   214→      mullionV: new THREE.BoxGeometry(0.09, 3.0, 0.09),
+   215→      mullionH: new THREE.BoxGeometry(14.15, 0.07, 0.07),
+   216→    };
+   217→    return { glassMat, gold, sun, geos };
+   218→  }, []);
+   219→
+   220→  return (
+   221→    <group>
+   222→      <mesh material={parts.glassMat} position={[0, 1.85, -18]}>
+   223→        <planeGeometry args={[14, 3.2]} />
+   224→      </mesh>
+   225→      {MULLION_XS.map((x) => (
+   226→        <mesh
+   227→          key={`nv-${x}`}
+   228→          geometry={parts.geos.mullionV}
+   229→          material={parts.gold}
+   230→          position={[x, 1.75, -18.04]}
+   231→        />
+   232→      ))}
+   233→      <mesh
+   234→        geometry={parts.geos.mullionH}
+   235→        material={parts.gold}
+   236→        position={[0, 1.1, -18.04]}
+   237→      />
+   238→      <mesh
+   239→        geometry={parts.geos.mullionH}
+   240→        material={parts.gold}
+   241→        position={[0, 2.6, -18.04]}
+   242→      />
+   243→      {/* Warm emissive plane faking the low morning sun behind the glass. */}
+   244→      <mesh material={parts.sun} position={[0, 3, -20]}>
+   245→        <planeGeometry args={[14, 6]} />
+   246→      </mesh>
+   247→    </group>
+   248→  );
+   249→}
+   250→
+   251→/* ------------------------------------------------------------------ */
+   252→/* Interior partitions                                                 */
+   253→/* ------------------------------------------------------------------ */
+   254→
+   255→interface WallDef {
+   256→  size: [number, number, number];
+   257→  pos: [number, number, number];
+   258→}
+   259→
+   260→const WALLS: WallDef[] = [
+   261→  // Living room north wall (z = 2) with the corridor mouth open at x 2.5..5.
+   262→  { size: [9.5, 2.95, 0.24], pos: [-2.25, 1.725, 2] },
+   263→  { size: [2, 2.95, 0.24], pos: [6, 1.725, 2] },
+   264→  // Corridor west wall (x = 2.5) with an open doorway at z -8.9..-7.
+   265→  { size: [0.24, 2.95, 9], pos: [2.5, 1.725, -2.5] },
+   266→  { size: [0.24, 2.95, 1.1], pos: [2.5, 1.725, -9.45] },
+   267→  // Corridor east wall (x = 5).
+   268→  { size: [0.24, 2.95, 12], pos: [5, 1.725, -4] },
+   269→  // Sun room south wall (z = -10) with a bright opening at x -0.9..5.
+   270→  { size: [6.1, 2.95, 0.24], pos: [-3.95, 1.725, -10] },
+   271→  { size: [2, 2.95, 0.24], pos: [6, 1.725, -10] },
+   272→];
+   273→
+   274→const SKIRTS: WallDef[] = [
+   275→  { size: [9.5, 0.09, 0.02], pos: [-2.25, 0.31, 2.13] },
+   276→  { size: [2, 0.09, 0.02], pos: [6, 0.31, 2.13] },
+   277→  { size: [0.02, 0.09, 9], pos: [2.63, 0.31, -2.5] },
+   278→  { size: [0.02, 0.09, 12], pos: [4.87, 0.31, -4] },
+   279→  { size: [6.1, 0.09, 0.02], pos: [-3.95, 0.31, -10.13] },
+   280→  { size: [2, 0.09, 0.02], pos: [6, 0.31, -10.13] },
+   281→];
+   282→
+   283→function Partitions() {
+   284→  const parts = useMemo(() => {
+   285→    const wall = new THREE.MeshStandardMaterial({
+   286→      color: IVORY_WALL,
+   287→      roughness: 0.92,
+   288→    });
+   289→    const gold = new THREE.MeshStandardMaterial({
+   290→      color: GOLD,
+   291→      metalness: 0.65,
+   292→      roughness: 0.3,
+   293→      emissive: "#6E5424",
+   294→      emissiveIntensity: 0.25,
+   295→    });
+   296→    const walnut = new THREE.MeshStandardMaterial({
+   297→      color: WALNUT,
+   298→      roughness: 0.55,
+   299→    });
+   300→    const geos = {
+   301→      wall: new THREE.BoxGeometry(1, 1, 1),
+   302→      skirt: new THREE.BoxGeometry(1, 1, 1),
+   303→      jamb: new THREE.BoxGeometry(0.34, 2.55, 0.14),
+   304→      header: new THREE.BoxGeometry(0.34, 0.16, 2.24),
+   305→      leaf: new THREE.BoxGeometry(0.06, 2.12, 0.92),
+   306→      handle: new THREE.CylinderGeometry(0.02, 0.02, 0.3, 8),
+   307→    };
+   308→    return { wall, gold, walnut, geos };
+   309→  }, []);
+   310→
+   311→  return (
+   312→    <group>
+   313→      {WALLS.map((w, i) => (
+   314→        <mesh
+   315→          key={`pw-${i}`}
+   316→          geometry={parts.geos.wall}
+   317→          material={parts.wall}
+   318→          position={w.pos}
+   319→          scale={w.size}
+   320→        />
+   321→      ))}
+   322→      {SKIRTS.map((w, i) => (
+   323→        <mesh
+   324→          key={`ps-${i}`}
+   325→          geometry={parts.geos.skirt}
+   326→          material={parts.gold}
+   327→          position={w.pos}
+   328→          scale={w.size}
+   329→        />
+   330→      ))}
+   331→      {/* Open doorway trim in the corridor west wall (z -8.9 .. -7). */}
+   332→      <mesh
+   333→        geometry={parts.geos.jamb}
+   334→        material={parts.walnut}
+   335→        position={[2.5, 1.5, -6.95]}
+   336→      />
+   337→      <mesh
+   338→        geometry={parts.geos.jamb}
+   339→        material={parts.walnut}
+   340→        position={[2.5, 1.5, -8.95]}
+   341→      />
+   342→      <mesh
+   343→        geometry={parts.geos.header}
+   344→        material={parts.walnut}
+   345→        position={[2.5, 2.5, -7.95]}
+   346→      />
+   347→      {/* The open walnut door leaf, swung into the suite vestibule. */}
+   348→      <group position={[2.5, 0.25, -8.9]} rotation-y={-2.007}>
+   349→        <mesh
+   350→          geometry={parts.geos.leaf}
+   351→          material={parts.walnut}
+   352→          position={[0, 1.06, 0.47]}
+   353→        />
+   354→        <mesh
+   355→          geometry={parts.geos.handle}
+   356→          material={parts.gold}
+   357→          position={[0.09, 1.15, 0.78]}
+   358→        />
+   359→      </group>
+   360→    </group>
+   361→  );
+   362→}
+   363→
+   364→/* ------------------------------------------------------------------ */
+   365→/* Living room (z 2..10, full width)                                   */
+   366→/* ------------------------------------------------------------------ */
+   367→
+   368→function LivingRoom() {
+   369→  const parts = useMemo(() => {
+   370→    const mats = {
+   371→      wood: new THREE.MeshStandardMaterial({ color: "#8B5E3C", roughness: 0.6 }),
+   372→      rug: new THREE.MeshStandardMaterial({ color: "#C97B57", roughness: 1 }),
+   373→      sofa: new THREE.MeshStandardMaterial({ color: EMERALD_DEEP, roughness: 0.85 }),
+   374→      ivory: new THREE.MeshStandardMaterial({ color: "#F2ECDD", roughness: 0.9 }),
+   375→      champagne: new THREE.MeshStandardMaterial({ color: "#E3C48F", roughness: 0.9 }),
+   376→      walnut: new THREE.MeshStandardMaterial({ color: WALNUT, roughness: 0.55 }),
+   377→      gold: new THREE.MeshStandardMaterial({
+   378→        color: GOLD,
+   379→        metalness: 0.7,
+   380→        roughness: 0.25,
+   381→        emissive: "#6E5424",
+   382→        emissiveIntensity: 0.3,
+   383→      }),
+   384→      charcoal: new THREE.MeshStandardMaterial({ color: "#26332D", roughness: 0.6 }),
+   385→      screen: new THREE.MeshStandardMaterial({
+   386→        color: "#0E1512",
+   387→        emissive: "#1F4034",
+   388→        emissiveIntensity: 0.6,
+   389→      }),
+   390→      canvas: new THREE.MeshStandardMaterial({ color: "#EDE5D0", roughness: 0.85 }),
+   391→      accent: new THREE.MeshStandardMaterial({ color: "#2E6B52", roughness: 0.7 }),
+   392→      cord: new THREE.MeshStandardMaterial({ color: "#3A3A34", roughness: 0.8 }),
+   393→      bulb: new THREE.MeshStandardMaterial({
+   394→        color: "#FFE9C4",
+   395→        emissive: "#FFD9A0",
+   396→        emissiveIntensity: 2.6,
+   397→      }),
+   398→      pot: new THREE.MeshStandardMaterial({ color: "#B06A4A", roughness: 0.8 }),
+   399→      trunk: new THREE.MeshStandardMaterial({ color: "#7A5B3A", roughness: 0.9 }),
+   400→      leaf1: new THREE.MeshStandardMaterial({ color: "#4E7A4E", roughness: 0.9 }),
+   401→      leaf2: new THREE.MeshStandardMaterial({ color: "#5C8A58", roughness: 0.9 }),
+   402→    };
+   403→    const geos = {
+   404→      floor: new THREE.BoxGeometry(13.8, 0.04, 7.8),
+   405→      rug: new THREE.BoxGeometry(6, 0.02, 4),
+   406→      tableTop: new THREE.BoxGeometry(1.25, 0.05, 0.72),
+   407→      leg: new THREE.CylinderGeometry(0.022, 0.022, 0.11, 8),
+   408→      tray: new THREE.BoxGeometry(0.4, 0.025, 0.24),
+   409→      console: new THREE.BoxGeometry(0.42, 0.6, 2.4),
+   410→      panel: new THREE.BoxGeometry(0.1, 1.3, 2.1),
+   411→      screen: new THREE.BoxGeometry(0.04, 1.0, 1.6),
+   412→      frameL: new THREE.BoxGeometry(0.95, 0.72, 0.05),
+   413→      frameS: new THREE.BoxGeometry(0.7, 0.55, 0.05),
+   414→      canvasL: new THREE.BoxGeometry(0.85, 0.62, 0.06),
+   415→      canvasS: new THREE.BoxGeometry(0.6, 0.45, 0.06),
+   416→      cord: new THREE.CylinderGeometry(0.008, 0.008, 0.5, 6),
+   417→      shade: new THREE.CylinderGeometry(0.17, 0.13, 0.2, 24),
+   418→      bulb: new THREE.SphereGeometry(0.055, 16, 12),
+   419→      pot: new THREE.CylinderGeometry(0.24, 0.19, 0.42, 16),
+   420→      trunk: new THREE.CylinderGeometry(0.035, 0.045, 0.55, 8),
+   421→      foliage: new THREE.SphereGeometry(1, 16, 12),
+   422→      lampBase: new THREE.CylinderGeometry(0.17, 0.17, 0.05, 16),
+   423→      lampPole: new THREE.CylinderGeometry(0.022, 0.022, 1.95, 8),
+   424→      lampArm: new THREE.CylinderGeometry(0.018, 0.018, 1.56, 8),
+   425→      lampShade: new THREE.CylinderGeometry(0.09, 0.13, 0.16, 20),
+   426→    };
+   427→    return { mats, geos };
+   428→  }, []);
+   429→
+   430→  const m = parts.mats;
+   431→  const g = parts.geos;
+   432→
+   433→  return (
+   434→    <group>
+   435→      {/* Walnut floor + terracotta area rug. */}
+   436→      <mesh geometry={g.floor} material={m.wood} position={[0, 0.27, 6]} />
+   437→      <mesh geometry={g.rug} material={m.rug} position={[0.3, 0.3, 6.2]} />
+   438→
+   439→      {/* Emerald sofa facing west, with cushions and throw pillows. */}
+   440→      <RoundedBox args={[1.05, 0.42, 2.35]} radius={0.07} smoothness={3} material={m.sofa} position={[2.35, 0.5, 6.2]} />
+   441→      <RoundedBox args={[0.28, 0.8, 2.35]} radius={0.08} smoothness={3} material={m.sofa} position={[2.83, 0.79, 6.2]} />
+   442→      <RoundedBox args={[1.0, 0.5, 0.26]} radius={0.08} smoothness={3} material={m.sofa} position={[2.3, 0.66, 5.08]} />
+   443→      <RoundedBox args={[1.0, 0.5, 0.26]} radius={0.08} smoothness={3} material={m.sofa} position={[2.3, 0.66, 7.32]} />
+   444→      <RoundedBox args={[0.48, 0.13, 0.46]} radius={0.05} smoothness={3} material={m.ivory} position={[2.15, 0.77, 5.75]} />
+   445→      <RoundedBox args={[0.48, 0.13, 0.46]} radius={0.05} smoothness={3} material={m.ivory} position={[2.15, 0.77, 6.65]} />
+   446→      <RoundedBox args={[0.13, 0.44, 0.44]} radius={0.05} smoothness={3} material={m.champagne} position={[2.62, 0.93, 5.55]} rotation={[0, 0, -0.18]} />
+   447→      <RoundedBox args={[0.13, 0.44, 0.44]} radius={0.05} smoothness={3} material={m.champagne} position={[2.62, 0.93, 6.85]} rotation={[0, 0, -0.18]} />
+   448→
+   449→      {/* Coffee table with gold legs + gold tray. */}
+   450→      <mesh geometry={g.tableTop} material={m.walnut} position={[0.6, 0.435, 6.3]} />
+   451→      {[
+   452→        [-0.55, -0.28],
+   453→        [0.55, -0.28],
+   454→        [-0.55, 0.28],
+   455→        [0.55, 0.28],
+   456→      ].map(([dx, dz], i) => (
+   457→        <mesh
+   458→          key={`tl-${i}`}
+   459→          geometry={g.leg}
+   460→          material={m.gold}
+   461→          position={[0.6 + dx, 0.365, 6.3 + dz]}
+   462→        />
+   463→      ))}
+   464→      <mesh geometry={g.tray} material={m.gold} position={[0.45, 0.472, 6.25]} />
+   465→
+   466→      {/* Console + charcoal TV wall panel with a subtle emissive screen. */}
+   467→      <mesh geometry={g.console} material={m.walnut} position={[-6.6, 0.59, 6]} />
+   468→      <mesh geometry={g.panel} material={m.charcoal} position={[-6.78, 1.75, 6]} />
+   469→      <mesh geometry={g.screen} material={m.screen} position={[-6.72, 1.75, 6]} />
+   470→
+   471→      {/* Gold-framed wall art on the living room north wall. */}
+   472→      <mesh geometry={g.frameL} material={m.gold} position={[0.6, 1.9, 2.16]} />
+   473→      <mesh geometry={g.canvasL} material={m.canvas} position={[0.6, 1.9, 2.19]} />
+   474→      <mesh geometry={g.frameS} material={m.gold} position={[-2.9, 1.9, 2.16]} />
+   475→      <mesh geometry={g.canvasS} material={m.accent} position={[-2.9, 1.9, 2.19]} />
+   476→
+   477→      {/* Pendant lamp glowing above the coffee table. */}
+   478→      <mesh geometry={g.cord} material={m.cord} position={[0.8, 2.95, 6.3]} />
+   479→      <mesh geometry={g.shade} material={m.gold} position={[0.8, 2.6, 6.3]} />
+   480→      <mesh geometry={g.bulb} material={m.bulb} position={[0.8, 2.47, 6.3]} />
+   481→
+   482→      {/* Floor plant in a terracotta pot. */}
+   483→      <mesh geometry={g.pot} material={m.pot} position={[-1.8, 0.5, 3.1]} />
+   484→      <mesh geometry={g.trunk} material={m.trunk} position={[-1.8, 0.98, 3.1]} />
+   485→      <mesh geometry={g.foliage} material={m.leaf1} position={[-1.8, 1.5, 3.1]} scale={0.42} />
+   486→      <mesh geometry={g.foliage} material={m.leaf2} position={[-1.5, 1.25, 3.35]} scale={0.3} />
+   487→      <mesh geometry={g.foliage} material={m.leaf2} position={[-2.1, 1.15, 2.85]} scale={0.28} />
+   488→
+   489→      {/* Arc floor lamp arcing over the sofa. */}
+   490→      <mesh geometry={g.lampBase} material={m.gold} position={[3.6, 0.315, 7]} />
+   491→      <mesh geometry={g.lampPole} material={m.gold} position={[3.6, 1.28, 7]} />
+   492→      <mesh geometry={g.lampArm} material={m.gold} position={[2.83, 2.33, 7]} rotation={[0, 0, 1.478]} />
+   493→      <mesh geometry={g.lampShade} material={m.gold} position={[2.05, 2.34, 7]} />
+   494→      <mesh geometry={g.bulb} material={m.bulb} position={[2.05, 2.24, 7]} scale={0.7} />
+   495→    </group>
+   496→  );
+   497→}
+   498→
+   499→/* ------------------------------------------------------------------ */
+   500→/* Primary corridor (x 2.5..5, z -10..2)                               */
+   501→/* ------------------------------------------------------------------ */
+   502→
+   503→const DOWNLIGHT_ZS = [0, -2, -4, -6, -8];
+   504→
+   505→function Corridor() {
+   506→  const parts = useMemo(() => {
+   507→    const mats = {
+   508→      runner: new THREE.MeshStandardMaterial({ color: "#D8C29A", roughness: 1 }),
+   509→      walnut: new THREE.MeshStandardMaterial({ color: WALNUT, roughness: 0.55 }),
+   510→      gold: new THREE.MeshStandardMaterial({
+   511→        color: GOLD,
+   512→        metalness: 0.7,
+   513→        roughness: 0.25,
+   514→        emissive: "#6E5424",
+   515→        emissiveIntensity: 0.3,
+   516→      }),
+   517→      downlight: new THREE.MeshStandardMaterial({
+   518→        color: "#FFF2D8",
+   519→        emissive: "#FFDCA6",
+   520→        emissiveIntensity: 2.4,
+   521→      }),
+   522→      canvas: new THREE.MeshStandardMaterial({ color: "#EDE5D0", roughness: 0.85 }),
+   523→      accent: new THREE.MeshStandardMaterial({ color: "#2E6B52", roughness: 0.7 }),
+   524→    };
+   525→    const geos = {
+   526→      runner: new THREE.BoxGeometry(1.9, 0.02, 11),
+   527→      downlight: new THREE.CylinderGeometry(0.17, 0.17, 0.025, 20),
+   528→      leaf: new THREE.BoxGeometry(0.07, 2.12, 1.02),
+   529→      lintel: new THREE.BoxGeometry(0.3, 0.12, 1.2),
+   530→      handle: new THREE.CylinderGeometry(0.02, 0.02, 0.3, 8),
+   531→      frame: new THREE.BoxGeometry(0.05, 0.62, 0.46),
+   532→      art: new THREE.BoxGeometry(0.06, 0.54, 0.38),
+   533→      console: new THREE.BoxGeometry(0.38, 0.62, 1.3),
+   534→      vase: new THREE.CylinderGeometry(0.05, 0.07, 0.22, 12),
+   535→    };
+   536→    return { mats, geos };
+   537→  }, []);
+   538→
+   539→  const m = parts.mats;
+   540→  const g = parts.geos;
+   541→
+   542→  return (
+   543→    <group>
+   544→      {/* Warm sand runner. */}
+   545→      <mesh geometry={g.runner} material={m.runner} position={[3.75, 0.26, -3.75]} />
+   546→
+   547→      {/* Five warm downlight discs in the ceiling. */}
+   548→      {DOWNLIGHT_ZS.map((z) => (
+   549→        <mesh
+   550→          key={`dl-${z}`}
+   551→          geometry={g.downlight}
+   552→          material={m.downlight}
+   553→          position={[3.75, 3.14, z]}
+   554→        />
+   555→      ))}
+   556→
+   557→      {/* Closed walnut doors (z = 0 and z = -4) with gold handles. */}
+   558→      {[0, -4].map((z) => (
+   559→        <group key={`door-${z}`}>
+   560→          <mesh geometry={g.leaf} material={m.walnut} position={[2.64, 1.31, z]} />
+   561→          <mesh geometry={g.lintel} material={m.walnut} position={[2.5, 2.42, z]} />
+   562→          <mesh geometry={g.handle} material={m.gold} position={[2.7, 1.2, z + 0.36]} />
+   563→        </group>
+   564→      ))}
+   565→
+   566→      {/* Gold-framed artworks on the west corridor wall. */}
+   567→      {[-1.9, -5.9].map((z) => (
+   568→        <group key={`art-${z}`}>
+   569→          <mesh geometry={g.frame} material={m.gold} position={[2.64, 1.78, z]} />
+   570→          <mesh
+   571→            geometry={g.art}
+   572→            material={z === -1.9 ? m.canvas : m.accent}
+   573→            position={[2.65, 1.78, z]}
+   574→          />
+   575→        </group>
+   576→      ))}
+   577→
+   578→      {/* Low wood console against the east wall. */}
+   579→      <mesh geometry={g.console} material={m.walnut} position={[4.62, 0.6, -1.6]} />
+   580→      <mesh geometry={g.vase} material={m.gold} position={[4.62, 1.02, -1.9]} />
+   581→    </group>
+   582→  );
+   583→}
+   584→
+   585→/* ------------------------------------------------------------------ */
+   586→/* Sun-drenched living room (z -18..-10, full width)                   */
+   587→/* ------------------------------------------------------------------ */
+   588→
+   589→function SunRoom() {
+   590→  const parts = useMemo(() => {
+   591→    const mats = {
+   592→      stone: new THREE.MeshStandardMaterial({ color: "#E3DACA", roughness: 0.8 }),
+   593→      tan: new THREE.MeshStandardMaterial({ color: "#B08050", roughness: 0.8 }),
+   594→      ivory: new THREE.MeshStandardMaterial({ color: "#EFE7D6", roughness: 0.9 }),
+   595→      champagne: new THREE.MeshStandardMaterial({ color: "#E3C48F", roughness: 0.9 }),
+   596→      walnut: new THREE.MeshStandardMaterial({ color: WALNUT, roughness: 0.55 }),
+   597→      gold: new THREE.MeshStandardMaterial({
+   598→        color: GOLD,
+   599→        metalness: 0.7,
+   600→        roughness: 0.25,
+   601→        emissive: "#6E5424",
+   602→        emissiveIntensity: 0.3,
+   603→      }),
+   604→      pot: new THREE.MeshStandardMaterial({ color: "#B06A4A", roughness: 0.8 }),
+   605→      trunk: new THREE.MeshStandardMaterial({ color: "#7A5B3A", roughness: 0.9 }),
+   606→      leaf1: new THREE.MeshStandardMaterial({ color: "#4E7A4E", roughness: 0.9 }),
+   607→      leaf2: new THREE.MeshStandardMaterial({ color: "#5C8A58", roughness: 0.9 }),
+   608→      sheer: new THREE.MeshStandardMaterial({
+   609→        color: "#F7F2E7",
+   610→        transparent: true,
+   611→        opacity: 0.25,
+   612→        roughness: 1,
+   613→        side: THREE.DoubleSide,
+   614→        depthWrite: false,
+   615→      }),
+   616→      shaft: new THREE.MeshBasicMaterial({
+   617→        color: "#FFE7C2",
+   618→        transparent: true,
+   619→        opacity: 0.08,
+   620→        blending: THREE.AdditiveBlending,
+   621→        depthWrite: false,
+   622→        side: THREE.DoubleSide,
+   623→      }),
+   624→    };
+   625→    const geos = {
+   626→      floor: new THREE.BoxGeometry(13.8, 0.04, 7.8),
+   627→      tableTop: new THREE.CylinderGeometry(0.3, 0.3, 0.04, 24),
+   628→      tableLeg: new THREE.CylinderGeometry(0.035, 0.035, 0.27, 10),
+   629→      knob: new THREE.SphereGeometry(0.05, 12, 10),
+   630→      bench: new THREE.BoxGeometry(3.9, 0.34, 0.55),
+   631→      pot: new THREE.CylinderGeometry(0.3, 0.24, 0.5, 16),
+   632→      trunk: new THREE.CylinderGeometry(0.04, 0.05, 0.7, 8),
+   633→      foliage: new THREE.SphereGeometry(1, 16, 12),
+   634→      rod: new THREE.CylinderGeometry(0.018, 0.018, 8.6, 8),
+   635→      shaft: new THREE.PlaneGeometry(2.2, 5.2),
+   636→      sheer: new THREE.PlaneGeometry(1.7, 2.85),
+   637→    };
+   638→    return { mats, geos };
+   639→  }, []);
+   640→
+   641→  const m = parts.mats;
+   642→  const g = parts.geos;
+   643→
+   644→  return (
+   645→    <group>
+   646→      {/* Pale stone floor. */}
+   647→      <mesh geometry={g.floor} material={m.stone} position={[0, 0.27, -14]} />
+   648→
+   649→      {/* Tan reading chair facing the morning light. */}
+   650→      <group position={[-3.8, 0.29, -15]} rotation-y={0.95}>
+   651→        <RoundedBox args={[0.78, 0.34, 0.78]} radius={0.07} smoothness={3} material={m.tan} position={[0, 0.24, 0]} />
+   652→        <RoundedBox args={[0.2, 0.68, 0.72]} radius={0.08} smoothness={3} material={m.tan} position={[-0.36, 0.6, 0]} />
+   653→        <RoundedBox args={[0.8, 0.14, 0.16]} radius={0.05} smoothness={3} material={m.tan} position={[0, 0.5, 0.4]} />
+   654→        <RoundedBox args={[0.8, 0.14, 0.16]} radius={0.05} smoothness={3} material={m.tan} position={[0, 0.5, -0.4]} />
+   655→        <RoundedBox args={[0.6, 0.09, 0.6]} radius={0.04} smoothness={3} material={m.ivory} position={[0, 0.45, 0]} />
+   656→      </group>
+   657→
+   658→      {/* Round side table with a small gold orb. */}
+   659→      <mesh geometry={g.tableTop} material={m.walnut} position={[-2.85, 0.56, -15.35]} />
+   660→      <mesh geometry={g.tableLeg} material={m.walnut} position={[-2.85, 0.42, -15.35]} />
+   661→      <mesh geometry={g.knob} material={m.gold} position={[-2.85, 0.62, -15.35]} />
+   662→
+   663→      {/* Large plant in the northwest corner. */}
+   664→      <mesh geometry={g.pot} material={m.pot} position={[-5.4, 0.54, -16.2]} />
+   665→      <mesh geometry={g.trunk} material={m.trunk} position={[-5.4, 1.15, -16.2]} />
+   666→      <mesh geometry={g.foliage} material={m.leaf1} position={[-5.4, 1.95, -16.2]} scale={0.45} />
+   667→      <mesh geometry={g.foliage} material={m.leaf2} position={[-5.0, 1.7, -16.0]} scale={0.35} />
+   668→      <mesh geometry={g.foliage} material={m.leaf2} position={[-5.75, 1.6, -16.5]} scale={0.3} />
+   669→      <mesh geometry={g.foliage} material={m.leaf1} position={[-5.3, 2.3, -16.4]} scale={0.28} />
+   670→
+   671→      {/* Low window bench by the north glass. */}
+   672→      <mesh geometry={g.bench} material={m.walnut} position={[-1.5, 0.46, -17.05]} />
+   673→      <RoundedBox args={[3.7, 0.12, 0.5]} radius={0.05} smoothness={3} material={m.ivory} position={[-1.5, 0.66, -17.05]} />
+   674→      <RoundedBox args={[0.35, 0.35, 0.12]} radius={0.05} smoothness={3} material={m.champagne} position={[-2.7, 0.85, -17.0]} rotation={[-0.3, 0, 0.1]} />
+   675→      <RoundedBox args={[0.35, 0.35, 0.12]} radius={0.05} smoothness={3} material={m.champagne} position={[-0.4, 0.85, -17.1]} rotation={[-0.3, 0, -0.1]} />
+   676→
+   677→      {/* Sheer curtain panels + gold rod. */}
+   678→      <mesh geometry={g.sheer} material={m.sheer} position={[-2.7, 1.68, -17.3]} />
+   679→      <mesh geometry={g.sheer} material={m.sheer} position={[2.7, 1.68, -17.3]} />
+   680→      <mesh geometry={g.rod} material={m.gold} position={[0, 3.1, -17.28]} rotation={[0, 0, Math.PI / 2]} />
+   681→
+   682→      {/* Additive sun shafts angling in from the north window. */}
+   683→      {[-3.2, -0.5, 2.2].map((x) => (
+   684→        <mesh
+   685→          key={`shaft-${x}`}
+   686→          geometry={g.shaft}
+   687→          material={m.shaft}
+   688→          position={[x, 2.1, -15.5]}
+   689→          rotation={[-0.61, 0, 0]}
+   690→        />
+   691→      ))}
+   692→    </group>
+   693→  );
+   694→}
+   695→
+   696→/* ------------------------------------------------------------------ */
+   697→/* Suite vestibule behind the open corridor door                       */
+   698→/* ------------------------------------------------------------------ */
+   699→
+   700→function SuiteVestibule() {
+   701→  const parts = useMemo(() => {
+   702→    const mats = {
+   703→      walnut: new THREE.MeshStandardMaterial({ color: WALNUT, roughness: 0.55 }),
+   704→      ivory: new THREE.MeshStandardMaterial({ color: "#EFE7D6", roughness: 0.9 }),
+   705→      gold: new THREE.MeshStandardMaterial({
+   706→        color: GOLD,
+   707→        metalness: 0.7,
+   708→        roughness: 0.25,
+   709→        emissive: "#6E5424",
+   710→        emissiveIntensity: 0.3,
+   711→      }),
+   712→      canvas: new THREE.MeshStandardMaterial({ color: "#EDE5D0", roughness: 0.85 }),
+   713→      pot: new THREE.MeshStandardMaterial({ color: "#B06A4A", roughness: 0.8 }),
+   714→      leaf: new THREE.MeshStandardMaterial({ color: "#4E7A4E", roughness: 0.9 }),
+   715→    };
+   716→    const geos = {
+   717→      bench: new THREE.BoxGeometry(1.5, 0.38, 0.5),
+   718→      frame: new THREE.BoxGeometry(0.05, 0.7, 0.9),
+   719→      art: new THREE.BoxGeometry(0.06, 0.6, 0.8),
+   720→      pot: new THREE.CylinderGeometry(0.16, 0.13, 0.3, 12),
+   721→      foliage: new THREE.SphereGeometry(1, 14, 10),
+   722→    };
+   723→    return { mats, geos };
+   724→  }, []);
+   725→
+   726→  const m = parts.mats;
+   727→  const g = parts.geos;
+   728→
+   729→  return (
+   730→    <group>
+   731→      <mesh geometry={g.bench} material={m.walnut} position={[-2.3, 0.48, -8.7]} />
+   732→      <RoundedBox args={[1.4, 0.1, 0.45]} radius={0.04} smoothness={3} material={m.ivory} position={[-2.3, 0.67, -8.7]} />
+   733→      <mesh geometry={g.frame} material={m.gold} position={[-6.8, 1.8, -8]} />
+   734→      <mesh geometry={g.art} material={m.canvas} position={[-6.78, 1.8, -8]} />
+   735→      <mesh geometry={g.pot} material={m.pot} position={[-6.0, 0.44, -9.3]} />
+   736→      <mesh geometry={g.foliage} material={m.leaf} position={[-6.0, 0.85, -9.3]} scale={0.26} />
+   737→    </group>
+   738→  );
+   739→}
+   740→
+   741→/* ------------------------------------------------------------------ */
+   742→/* Pavilion root                                                       */
+   743→/* ------------------------------------------------------------------ */
+   744→
+   745→/**
+   746→ * The showcase residence: x -7..7, z -18..10, height 3.6, flat roof.
+   747→ * The south glass facade fades out between progress 0.46 and 0.54 so the
+   748→ * camera passes through the threshold without clipping visible glass.
+   749→ */
+   750→export function Pavilion({ progressRef }: { progressRef: RefObject<number> }) {
+   751→  return (
+   752→    <group>
+   753→      <Shell />
+   754→      <SouthFacade progressRef={progressRef} />
+   755→      <NorthWindow />
+   756→      <Partitions />
+   757→      <LivingRoom />
+   758→      <Corridor />
+   759→      <SunRoom />
+   760→      <SuiteVestibule />
+   761→    </group>
+   762→  );
+   763→}
+   764→
